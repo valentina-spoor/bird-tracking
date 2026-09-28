@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Generated results
+experiments/results/
+
+# Large datasets/videos
+data/external/
+*.mp4
+*.mkv
+
+# macOS
+.DS_Store
