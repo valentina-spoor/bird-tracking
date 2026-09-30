@@ -1,0 +1,7 @@
+{
+  "experiment_name": "baseline",
+  "euclidean_matching_threshold": 250,
+  "max_age": 30,
+  "tentative_threshold": 20,
+  "kalman_gating": "full"
+}
