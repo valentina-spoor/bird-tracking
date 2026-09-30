@@ -16,6 +16,7 @@ class TrackedObject:
         self.__kalman_tracker_state = initial_kalman_tracker_state
         self.__state = TrackedObjectState.TENTATIVE
         self.__age = 0
+        self.__appearance = getattr(initial_detection, "appearance", None)
 
     @property
     def id(self):
@@ -45,6 +46,19 @@ class TrackedObject:
     def age(self) -> int:
         return self.__age
 
+    @property
+    def appearance(self):
+        """Running (EMA) visual template of this track, or None if appearance is not in use."""
+        return self.__appearance
+
+    def update_appearance(self, new_appearance, alpha: float):
+        if new_appearance is None:
+            return
+        if self.__appearance is None:
+            self.__appearance = new_appearance
+        else:
+            self.__appearance = self.__appearance.blended(new_appearance, alpha)
+
     def increment_age(self):
         self.__age += 1
 
@@ -68,6 +82,7 @@ class TrackedObject:
 
         self.__detections.extend(other.detections)
         self.__kalman_tracker_state = other.kalman_tracker_state
+        self.__appearance = other.appearance
         self.__age = other.age
 
     def __add__(self, other: "TrackedObject") -> "TrackedObject":

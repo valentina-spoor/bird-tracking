@@ -1,8 +1,8 @@
 {
-  "experiment_name": "baseline",
+  "experiment_name": "k4t20_motion",
   "euclidean_matching_threshold": 250,
   "max_age": 30,
   "tentative_threshold": 20,
   "kalman_gating": "full",
-  "association_method": "original"
+  "association_method": "motion"
 }

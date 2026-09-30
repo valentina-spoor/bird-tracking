@@ -37,6 +37,7 @@ from pathlib import Path
 import json
 
 import cv2
+from tracker.association_costs import ASSOCIATION_METHODS, AssociationParams
 from tracker.shim import BoundingBoxXYWH, DetectionNoCrop, xywh_to_xyxy
 from tracker.simple_sort_tracker import SimpleSORTTracker
 from tracker.tracked_object_state import TrackedObjectState
@@ -156,6 +157,9 @@ def run(
     max_age: int,
     tentative_threshold: int,
     kalman_gating: str,
+    association_method: str,
+    association_params: AssociationParams | None = None,
+    write_video: bool = True,
 ) -> int:
     detections_by_frame = load_detections_by_frame(detections_path)
     tracker = SimpleSORTTracker(
@@ -163,6 +167,8 @@ def run(
         max_age=max_age,
         tentative_threshold=tentative_threshold,
         kalman_gating=kalman_gating,
+        association_method=association_method,
+        association_params=association_params,
     )
 
     capture = cv2.VideoCapture(str(video_path))
@@ -175,9 +181,14 @@ def run(
     check_frame_alignment(detections_by_frame, frame_count, video_path, detections_path)
     box_thickness, dot_radius, font_scale = annotation_scale(width)
 
-    out_video_path.parent.mkdir(parents=True, exist_ok=True)
+    if write_video:
+        out_video_path.parent.mkdir(parents=True, exist_ok=True)
     out_tracks_path.parent.mkdir(parents=True, exist_ok=True)
-    writer = cv2.VideoWriter(str(out_video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    writer = (
+        cv2.VideoWriter(str(out_video_path), cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        if write_video
+        else None
+    )
 
     trails: dict[int, list[tuple[int, int]]] = defaultdict(list)
     track_rows: list[dict] = []
@@ -197,7 +208,8 @@ def run(
             frame_timestamp = round(frame_number * 1000 / fps)
             boxes = detections_by_frame.get(frame_number, [])
             detections = build_detections(frame_number, frame_timestamp, boxes)
-            tracker.match_and_track(detections)
+            # The frame is only read by appearance-based association methods; 'original' ignores it.
+            tracker.match_and_track(detections, frame=frame)
 
             for tracked_object in tracker.tracked_objects:
                 if tracked_object.state != TrackedObjectState.CONFIRMED:
@@ -208,21 +220,23 @@ def run(
                 color = _track_color(tracked_object.id)
                 top_left = (round(box.x1), round(box.y1))
                 bottom_right = (round(box.x2), round(box.y2))
-                cv2.rectangle(frame, top_left, bottom_right, color, box_thickness)
+                if write_video:
+                    cv2.rectangle(frame, top_left, bottom_right, color, box_thickness)
                 center = (round((box.x1 + box.x2) / 2), round((box.y1 + box.y2) / 2))
                 trails[tracked_object.id].append(center)
-                for point in trails[tracked_object.id]:
-                    cv2.circle(frame, point, dot_radius, color, -1)
-                label = str(tracked_object.id)
-                cv2.putText(
-                    frame,
-                    label,
-                    (top_left[0], top_left[1] - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale,
-                    color,
-                    box_thickness,
-                )
+                if write_video:
+                    for point in trails[tracked_object.id]:
+                        cv2.circle(frame, point, dot_radius, color, -1)
+                    label = str(tracked_object.id)
+                    cv2.putText(
+                        frame,
+                        label,
+                        (top_left[0], top_left[1] - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale,
+                        color,
+                        box_thickness,
+                    )
                 track_rows.append(
                     {
                         "frame_number": frame_number,
@@ -234,17 +248,18 @@ def run(
                     }
                 )
 
-            frame_counter_baseline_y = round(20 * font_scale / MINIMUM_FONT_SCALE)
-            cv2.putText(
-                frame,
-                f"frame {frame_number}",
-                (10, frame_counter_baseline_y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                font_scale,
-                (0, 0, 0),
-                box_thickness,
-            )
-            writer.write(frame)
+            if write_video:
+                frame_counter_baseline_y = round(20 * font_scale / MINIMUM_FONT_SCALE)
+                cv2.putText(
+                    frame,
+                    f"frame {frame_number}",
+                    (10, frame_counter_baseline_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale,
+                    (0, 0, 0),
+                    box_thickness,
+                )
+                writer.write(frame)
             frames_processed += 1
             frame_number += 1
             if frame_count and frame_number >= frame_count:
@@ -254,7 +269,8 @@ def run(
 
     tracker.finalize_tracking()
     capture.release()
-    writer.release()
+    if writer is not None:
+        writer.release()
     return frames_processed
 
 
@@ -262,7 +278,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--detections", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True, help="path to write the annotated video")
+    parser.add_argument("--out", type=Path, default=None, help="path to write the annotated video (omit with --no-video)")
+    parser.add_argument("--no-video", action="store_true", help="skip writing the annotated video (much faster on 4K)")
     parser.add_argument("--tracks", type=Path, required=True, help="path to write the track CSV")
     parser.add_argument(
         "--euclidean-matching-threshold",
@@ -289,11 +306,31 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--association-method",
+        choices=list(ASSOCIATION_METHODS),
+        default=None,
+        help="Association cost: original | motion | appearance | fused (see docs/association_methods.md).",
+    )
+
+    parser.add_argument("--appearance-weight", type=float, default=None, help="weight of the appearance term in 'fused', in [0, 1]")
+    parser.add_argument("--appearance-ema", type=float, default=None, help="weight kept on the old track template, in [0, 1)")
+    parser.add_argument("--appearance-gate", type=float, default=None, help="appearance distance above this is infeasible (1.0 = off)")
+    parser.add_argument(
+        "--cue-weights",
+        type=float,
+        nargs=3,
+        metavar=("COLOR", "PATCH", "CONTRAST"),
+        default=None,
+        help="relative weight of each appearance cue",
+    )
+
+    parser.add_argument(
         "--config",
         type=Path,
         default=None,
         help="Optional JSON experiment configuration file",
     )
+
 
 
     args = parser.parse_args()
@@ -333,6 +370,34 @@ def main() -> None:
         else config.get("kalman_gating", "position")
     )
 
+    association_method = (
+        args.association_method
+        if args.association_method is not None
+        else config.get("association_method", "original")
+    )
+
+    defaults = AssociationParams()
+    association_params = AssociationParams(
+        appearance_weight=(
+            args.appearance_weight
+            if args.appearance_weight is not None
+            else config.get("appearance_weight", defaults.appearance_weight)
+        ),
+        cue_weights=tuple(
+            args.cue_weights if args.cue_weights is not None else config.get("cue_weights", defaults.cue_weights)
+        ),
+        appearance_ema=(
+            args.appearance_ema if args.appearance_ema is not None else config.get("appearance_ema", defaults.appearance_ema)
+        ),
+        appearance_gate=(
+            args.appearance_gate
+            if args.appearance_gate is not None
+            else config.get("appearance_gate", defaults.appearance_gate)
+        ),
+    )
+
+    if args.out is None and not args.no_video:
+        parser.error("--out is required unless --no-video is given")
 
     frames_processed = run(
         args.video,
@@ -343,6 +408,9 @@ def main() -> None:
         max_age,
         tentative_threshold,
         kalman_gating,
+        association_method,
+        association_params,
+        write_video=not args.no_video,
     )
 
     experiment_name = config.get("experiment_name", "custom")
@@ -352,8 +420,12 @@ def main() -> None:
     print(f"max_age: {max_age}")
     print(f"tentative_threshold: {tentative_threshold}")
     print(f"kalman_gating: {kalman_gating}")
+    print(f"association_method: {association_method}")
+    if association_method in ("appearance", "fused"):
+        print(f"association_params: {association_params}")
     print(f"frames processed: {frames_processed}")
-    print(f"wrote {args.out}")
+    if not args.no_video:
+        print(f"wrote {args.out}")
     print(f"wrote {args.tracks}")
 
 

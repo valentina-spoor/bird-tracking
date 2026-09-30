@@ -13,6 +13,8 @@ from tracker.shim import (
     xyxy_to_cxcyah,
 )
 
+from .appearance import extract_appearance
+from .association_costs import ASSOCIATION_METHODS, AssociationParams, needs_frame
 from .kalman_filter import KalmanFilter
 from .kalman_tracker_state import KalmanTrackerState
 from .matching import match_detections_with_tracked_objects
@@ -36,6 +38,8 @@ class SimpleSORTTracker:
         max_age: int,
         tentative_threshold: int = 3,
         kalman_gating: str = "position",
+        association_method: str = "original",
+        association_params: AssociationParams | None = None,
     ):
         self.kalman_filter = KalmanFilter()
         self.nearest_neighbour_metric = NearestNeighborDistanceMetric("euclidean", euclidean_matching_threshold)
@@ -50,15 +54,30 @@ class SimpleSORTTracker:
 
         self.kalman_gating = kalman_gating
         self.kalman_only_position = kalman_gating == "position"
+
+        if association_method not in ASSOCIATION_METHODS:
+            raise ValueError(
+                f"association_method must be one of {ASSOCIATION_METHODS}, got {association_method!r}"
+            )
+
+        self.association_method = association_method
+        self.association_params = association_params or AssociationParams()
+
         self.id_generator = count()
 
-    def match_and_track(self, new_detections: list[Detection | DetectionNoCrop]):
+    def match_and_track(self, new_detections: list[Detection | DetectionNoCrop], frame: np.ndarray | None = None):
         # NOTE!
         # This is a big function that could've been split into smaller functions.
         # However, since the tracked object states are being mutated, a split may be be harder follow
         # as you would need to context switch. If you think this is false, feel free to change it.
         # NOTE2!
         # Be aware that the tracked objects will be in the predicted state after this function is called.
+
+        if needs_frame(self.association_method):
+            if frame is None:
+                raise ValueError(f"association_method={self.association_method!r} needs the video frame")
+            for detection in new_detections:
+                detection.appearance = extract_appearance(frame, detection.bounding_box)
 
         matched_pairs, not_matched_tracked_objects, not_matched_detections = (
             match_detections_with_tracked_objects(
@@ -67,12 +86,15 @@ class SimpleSORTTracker:
                 self.kalman_filter,
                 self.nearest_neighbour_metric,
                 self.kalman_only_position,
+                self.association_method,
+                self.association_params,
             )
         )
 
         for tracked_object_idx, detection_idx in matched_pairs:
             tracked_object = self.tracked_objects[tracked_object_idx]
             tracked_object.update(self.kalman_filter, new_detections[detection_idx])
+            tracked_object.update_appearance(new_detections[detection_idx].appearance, self.association_params.appearance_ema)
             if tracked_object.state == TrackedObjectState.CONFIRMED:
                 continue
 

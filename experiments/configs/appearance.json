@@ -1,8 +1,8 @@
 {
-  "experiment_name": "baseline",
+  "experiment_name": "appearance",
   "euclidean_matching_threshold": 250,
   "max_age": 30,
   "tentative_threshold": 3,
   "kalman_gating": "position",
-  "association_method": "original"
+  "association_method": "appearance"
 }

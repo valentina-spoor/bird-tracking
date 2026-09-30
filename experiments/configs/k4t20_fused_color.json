@@ -1,0 +1,14 @@
+{
+  "experiment_name": "k4t20_fused_color",
+  "euclidean_matching_threshold": 250,
+  "max_age": 30,
+  "tentative_threshold": 20,
+  "kalman_gating": "full",
+  "association_method": "fused",
+  "appearance_weight": 0.5,
+  "cue_weights": [
+    1,
+    0,
+    0
+  ]
+}

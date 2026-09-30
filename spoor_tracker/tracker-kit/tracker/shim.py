@@ -133,6 +133,9 @@ class DetectionNoCrop:
     video_name_id: Optional[str] = None
     frame_timestamp_unit: Optional[FrameTimestampUnit] = None
     frame_rate: int | None = None
+    # Visual descriptor (tracker.appearance.Appearance), filled in by the tracker when the
+    # association method needs it. Not part of the production DetectionNoCrop.
+    appearance: Optional[object] = None
 
 
 # The nine copied files reference `Detection` only as a type hint (grep confirms none of them

@@ -3,6 +3,7 @@
 import numpy as np
 
 from tracker import linear_assignment, nn_matching
+from tracker.association_costs import AssociationParams, make_cost
 from tracker.distance_matching import closest_track_cost
 from tracker.kalman_filter import KalmanFilter
 from tracker.shim import Detection
@@ -19,11 +20,33 @@ def match_detections_with_tracked_objects(
     kalman_filter: KalmanFilter,
     nearest_neighbor_metric: nn_matching.NearestNeighborDistanceMetric,
     kalman_only_position: bool = True,
+    association_method: str = "original",
+    association_params: AssociationParams | None = None,
 ):
+    new_cost = None
+    if association_method != "original":
+        new_cost = make_cost(
+            association_method,
+            association_params or AssociationParams(),
+            nearest_neighbor_metric.matching_threshold,
+            MAX_AGE,
+        )
+
     def gated_metric(tracked_object: list[TrackedObject], dets, max_age, track_indices, detection_indices):
+        
         features = np.array([dets[i].feature for i in detection_indices])
-        feature_corresponding_ids = np.array([tracked_object[i].id for i in track_indices])
-        cost_matrix = nearest_neighbor_metric.distance(features, feature_corresponding_ids)
+        feature_corresponding_ids = np.array(
+            [tracked_object[i].id for i in track_indices]
+        )
+
+        if association_method == "original":
+            cost_matrix = nearest_neighbor_metric.distance(
+                features,
+                feature_corresponding_ids,
+            )
+        else:
+            cost_matrix = new_cost(tracked_object, dets, max_age, track_indices, detection_indices)
+        
         cost_matrix = linear_assignment.gate_cost_matrix(
             kalman_filter,
             cost_matrix,
@@ -67,7 +90,7 @@ def match_detections_with_tracked_objects(
         unmatched_tracks_b,
         unmatched_detections,
     ) = linear_assignment.min_cost_matching(
-        closest_track_cost,
+        closest_track_cost if new_cost is None else new_cost,
         MAX_AGE,
         nearest_neighbor_metric.matching_threshold,
         tracked_objects,
