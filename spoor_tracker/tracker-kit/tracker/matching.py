@@ -18,6 +18,7 @@ def match_detections_with_tracked_objects(
     detections: list[Detection],
     kalman_filter: KalmanFilter,
     nearest_neighbor_metric: nn_matching.NearestNeighborDistanceMetric,
+    kalman_only_position: bool = True,
 ):
     def gated_metric(tracked_object: list[TrackedObject], dets, max_age, track_indices, detection_indices):
         features = np.array([dets[i].feature for i in detection_indices])
@@ -30,7 +31,7 @@ def match_detections_with_tracked_objects(
             dets,
             track_indices,
             detection_indices,
-            only_position=True,
+            only_position=kalman_only_position,
         )
 
         return cost_matrix

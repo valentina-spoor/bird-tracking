@@ -34,6 +34,7 @@ import csv
 import hashlib
 from collections import defaultdict
 from pathlib import Path
+import json
 
 import cv2
 from tracker.shim import BoundingBoxXYWH, DetectionNoCrop, xywh_to_xyxy
@@ -56,6 +57,12 @@ MINIMUM_FONT_SCALE = 0.4
 DEFAULT_MAX_AGE = 30
 DEFAULT_TENTATIVE_THRESHOLD = 3
 
+
+def load_config(config_path: Path) -> dict:
+    with config_path.open() as f:
+        config = json.load(f)
+
+    return config
 
 def annotation_scale(frame_width: int) -> tuple[int, int, float]:
     """Box thickness, path dot radius and font scale for a frame of the given width.
@@ -148,12 +155,14 @@ def run(
     euclidean_matching_threshold: float,
     max_age: int,
     tentative_threshold: int,
+    kalman_gating: str,
 ) -> int:
     detections_by_frame = load_detections_by_frame(detections_path)
     tracker = SimpleSORTTracker(
         euclidean_matching_threshold=euclidean_matching_threshold,
         max_age=max_age,
         tentative_threshold=tentative_threshold,
+        kalman_gating=kalman_gating,
     )
 
     capture = cv2.VideoCapture(str(video_path))
@@ -258,24 +267,91 @@ def main() -> None:
     parser.add_argument(
         "--euclidean-matching-threshold",
         type=float,
-        default=REFERENCE_EUCLIDEAN_MATCHING_THRESHOLD,
-        help="max distance (both matching stages) accepted as the same track; "
-        "config_8k.yaml's own fleet-tuned value by default",
+        default=None,
     )
-    parser.add_argument("--max-age", type=int, default=DEFAULT_MAX_AGE)
-    parser.add_argument("--tentative-threshold", type=int, default=DEFAULT_TENTATIVE_THRESHOLD)
+
+    parser.add_argument(
+        "--max-age",
+        type=int,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--tentative-threshold",
+        type=int,
+        default=None,
+    )
+
+    parser.add_argument(
+        "--kalman-gating",
+        choices=["position", "full"],
+        default=None,
+    )
+
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Optional JSON experiment configuration file",
+    )
+
+
     args = parser.parse_args()
+
+    config = {}
+    
+    if args.config is not None:
+        config = load_config(args.config)
+
+    euclidean_matching_threshold = (
+        args.euclidean_matching_threshold
+        if args.euclidean_matching_threshold is not None
+        else config.get(
+            "euclidean_matching_threshold",
+            REFERENCE_EUCLIDEAN_MATCHING_THRESHOLD,
+        )
+    )
+
+    max_age = (
+        args.max_age
+        if args.max_age is not None
+        else config.get("max_age", DEFAULT_MAX_AGE)
+    )
+
+    tentative_threshold = (
+        args.tentative_threshold
+        if args.tentative_threshold is not None
+        else config.get(
+            "tentative_threshold",
+            DEFAULT_TENTATIVE_THRESHOLD,
+        )
+    )
+
+    kalman_gating = (
+        args.kalman_gating
+        if args.kalman_gating is not None
+        else config.get("kalman_gating", "position")
+    )
+
 
     frames_processed = run(
         args.video,
         args.detections,
         args.out,
         args.tracks,
-        args.euclidean_matching_threshold,
-        args.max_age,
-        args.tentative_threshold,
+        euclidean_matching_threshold,
+        max_age,
+        tentative_threshold,
+        kalman_gating,
     )
-    print(f"euclidean_matching_threshold: {args.euclidean_matching_threshold}")
+
+    experiment_name = config.get("experiment_name", "custom")
+
+    print(f"experiment: {experiment_name}")
+    print(f"euclidean_matching_threshold: {euclidean_matching_threshold}")
+    print(f"max_age: {max_age}")
+    print(f"tentative_threshold: {tentative_threshold}")
+    print(f"kalman_gating: {kalman_gating}")
     print(f"frames processed: {frames_processed}")
     print(f"wrote {args.out}")
     print(f"wrote {args.tracks}")

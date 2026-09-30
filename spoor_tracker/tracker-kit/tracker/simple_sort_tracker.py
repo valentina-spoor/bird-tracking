@@ -35,6 +35,7 @@ class SimpleSORTTracker:
         euclidean_matching_threshold: float,
         max_age: int,
         tentative_threshold: int = 3,
+        kalman_gating: str = "position",
     ):
         self.kalman_filter = KalmanFilter()
         self.nearest_neighbour_metric = NearestNeighborDistanceMetric("euclidean", euclidean_matching_threshold)
@@ -42,6 +43,13 @@ class SimpleSORTTracker:
         self.deleted_tracked_objects: list[TrackedObject] = []
         self.max_age = max_age
         self.tentative_threshold = tentative_threshold
+        if kalman_gating not in {"position", "full"}:
+            raise ValueError(
+                "kalman_gating must be either 'position' or 'full'"
+            )
+
+        self.kalman_gating = kalman_gating
+        self.kalman_only_position = kalman_gating == "position"
         self.id_generator = count()
 
     def match_and_track(self, new_detections: list[Detection | DetectionNoCrop]):
@@ -52,8 +60,14 @@ class SimpleSORTTracker:
         # NOTE2!
         # Be aware that the tracked objects will be in the predicted state after this function is called.
 
-        matched_pairs, not_matched_tracked_objects, not_matched_detections = match_detections_with_tracked_objects(
-            self.tracked_objects, new_detections, self.kalman_filter, self.nearest_neighbour_metric
+        matched_pairs, not_matched_tracked_objects, not_matched_detections = (
+            match_detections_with_tracked_objects(
+                self.tracked_objects,
+                new_detections,
+                self.kalman_filter,
+                self.nearest_neighbour_metric,
+                self.kalman_only_position,
+            )
         )
 
         for tracked_object_idx, detection_idx in matched_pairs:
