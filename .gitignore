@@ -9,6 +9,7 @@ experiments/results/
 data/external/
 *.mp4
 *.mkv
+*.zip
 
 # macOS
 .DS_Store
