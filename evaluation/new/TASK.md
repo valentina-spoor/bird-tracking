@@ -9,6 +9,34 @@ and wait for my confirmation before continuing. Do not make product decisions on
 something is unclear or you find that an assumption in this file is wrong, stop and ask. The
 DECISIONS block below is final unless I change it.
 
+## 0. Working environment (read first)
+
+You are working in a git worktree, not in my main checkout. Data files are git-ignored, so they
+exist **only in my main checkout**, not in your worktree:
+
+- Main checkout (read-only for you): `/Users/valentinabenedossi/Desktop/Spoor/bird-tracking`
+- Data (videos, GT CSVs, detection CSVs): `/Users/valentinabenedossi/Desktop/Spoor/bird-tracking/data/`
+- Legacy experiment results (tracker CSVs): `/Users/valentinabenedossi/Desktop/Spoor/bird-tracking/experiments/results/`
+
+Rules:
+- **Read** data and legacy results from those absolute paths. Do not copy, move or symlink
+  videos or large CSVs into the worktree.
+- **Never write, modify or delete anything in the main checkout.** All code, tests, fixtures and
+  outputs go in your worktree.
+- Code and configs must not hard-code these paths. Make the data root and the results root
+  configurable (config file entries and CLI flags), and put my paths above in
+  `evaluation/new/configs/local.yaml`, which you add to `.gitignore`. `default.yaml` uses
+  placeholders and documents what to set.
+- Generated outputs (evaluation results, re-run tracker CSVs, annotated videos) go under
+  git-ignored folders inside the worktree. Do not commit them. Only small test fixtures that you
+  create yourself are committed.
+- Code and configs (`experiments/configs/`) that are tracked in git are already in your worktree;
+  read those from the worktree, not from the main checkout.
+- At CHECKPOINT 1, confirm you can read every file the task needs from these paths, and list
+  anything missing.
+
+## Ground rules
+
 Do not modify any file under `spoor_tracker/tracker-kit/tracker/`: those are verbatim copies of
 production code (see `spoor_tracker/tracker-kit/PROVENANCE.md`). The only tracker-kit file you
 may change is `spoor_tracker/tracker-kit/run_tracker.py`.
@@ -188,8 +216,9 @@ frame numbers, track ids and boxes), and that the `matched_online` variant equal
 CSV with its frozen rows removed. Report the row counts of every variant.
 
 **Re-running experiments:** after the regression check passes, propose (do not run yet) how to
-re-run every experiment whose config is available with the new runner, writing the new CSVs next
-to the legacy ones without overwriting them.
+re-run every experiment whose config is available with the new runner. The new CSVs go in a
+git-ignored folder inside the worktree (for example `experiments/results_v2/<experiment>/`),
+never into the main checkout, and the legacy results stay untouched.
 
 CHECKPOINT 1: after reading the code and data, inspecting `experiments/results/`, and proposing
 the result-folder mapping, but before writing code.
@@ -269,8 +298,11 @@ both similarities, and point at where the 79 identity jumps show up (IDSW, AssA,
 
 ## 8. Batch run and outputs (`batch.py`, `scripts/evaluate.py`)
 
-- `python evaluation/new/scripts/evaluate.py --config evaluation/new/configs/default.yaml
-  --results experiments/results --gt data --out evaluation/new/results/<timestamp>/`
+- `python evaluation/new/scripts/evaluate.py --config evaluation/new/configs/local.yaml
+  --out evaluation/new/results/<timestamp>/` (data root, GT location and results roots come from
+  the config; `--gt` and `--results` flags override them). `evaluation/new/results/` is
+  git-ignored. Allow several results roots at once, so legacy results (main checkout) and re-run
+  results (worktree) can be evaluated in the same run.
 - Discovery follows the mapping agreed at CHECKPOINT 1. A video is evaluated only if its GT file
   exists; skipped videos are listed in the log, not silently ignored.
 - Outputs:
