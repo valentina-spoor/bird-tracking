@@ -1,0 +1,13 @@
+{
+  "experiment_name": "kalman_4d-tentative15",
+  "provenance": "reconstructed, verified by exact match",
+  "verified_against": [
+    "experiments/results/kalman_4d-tentative15/1DAC_tracks.csv (1DAC, 4177 rows)"
+  ],
+  "verified_input": "yolo (spoor_tracker/tracker-kit/data/<video>_detections.csv)",
+  "association_method": "original",
+  "euclidean_matching_threshold": 250,
+  "kalman_gating": "full",
+  "max_age": 30,
+  "tentative_threshold": 15
+}

@@ -1,0 +1,14 @@
+{
+  "experiment_name": "exp02_tentative_5",
+  "provenance": "reconstructed, verified by exact match",
+  "verified_against": [
+    "experiments/results/exp02_tentative_5/1DAC_tentative5_tracks.csv (1DAC, 7087 rows)",
+    "experiments/results/exp02_tentative_5/6C42_tentative5_tracks.csv (6C42, 1048 rows)"
+  ],
+  "verified_input": "yolo (spoor_tracker/tracker-kit/data/<video>_detections.csv)",
+  "association_method": "original",
+  "euclidean_matching_threshold": 250,
+  "kalman_gating": "position",
+  "max_age": 30,
+  "tentative_threshold": 5
+}

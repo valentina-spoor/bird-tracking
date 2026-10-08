@@ -13,3 +13,11 @@ data/external/
 
 # macOS
 .DS_Store
+
+# Re-run tracker outputs and evaluation outputs (generated, never committed)
+experiments/results_v2/
+evaluation/new/results/
+evaluation/new/cache/
+
+# Machine-specific paths
+evaluation/new/configs/local.yaml

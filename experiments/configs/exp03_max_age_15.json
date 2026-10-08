@@ -1,0 +1,16 @@
+{
+  "experiment_name": "exp03_max_age_15",
+  "provenance": "reconstructed, verified by exact match",
+  "verified_against": [
+    "experiments/results/exp03_max_age_15/6C42_age15_tracks.csv (6C42, 1195 rows)"
+  ],
+  "verified_input": "yolo (spoor_tracker/tracker-kit/data/<video>_detections.csv)",
+  "association_method": "original",
+  "euclidean_matching_threshold": 250,
+  "kalman_gating": "position",
+  "max_age": 15,
+  "tentative_threshold": 3,
+  "not_verifiable": [
+    "experiments/results/exp03_max_age_15/1DAC_age15_tracks.csv is empty (header only)"
+  ]
+}

@@ -10,11 +10,22 @@ The detections CSV is birdwatcher's own schema
 top-left corner. Frames absent from the CSV are treated as having no detections that frame
 (a detection gap), not as an error.
 
-The CSV's `frame_number` values must exactly span the video's own frame range, 0 through
-frame_count - 1: this is how a detection is matched to the video frame it belongs to (see
-check_frame_alignment below). A CSV cut with `--start-frame-number`/`--stop-frame-number` and
-run against the uncut video (or vice versa) fails this check and refuses to run, rather than
-silently tracking the wrong frames.
+The CSV's `frame_number` values must lie inside the video's own frame range, 0 through
+frame_count - 1, with frame_count read from the video: this is how a detection is matched to
+the video frame it belongs to (see check_frame_alignment below). A CSV cut with
+`--start-frame-number`/`--stop-frame-number` and run against the uncut video (or vice versa)
+fails this check and refuses to run, rather than silently tracking the wrong frames.
+
+Track CSV. By default every row the tracker can account for is written, labelled:
+`frame_number, track_id, x, y, w, h, row_type, track_confirmed` (x, y = top-left corner).
+`row_type` is `matched` (the track was matched to a detection this frame; the box is that
+detection), `pre_confirmation` (a matched frame from before the track reached
+`tentative_threshold` matches, written retroactively), or `predicted` (a confirmed track that
+was alive but unmatched; the box is the Kalman prediction for this frame). `track_confirmed`
+says whether the track ever reached CONFIRMED; never-confirmed tracks are written too, as
+`pre_confirmation` rows. Nothing else is written: a coasting track's last box is not repeated.
+`--legacy-output` writes the old format instead: `frame_number, track_id, x, y, w, h` for every
+CONFIRMED track alive in each frame, using its last matched box (repeated while it coasts).
 
 Per-frame processing, straight from `SimpleSORTTracker.match_and_track`'s own comments and
 `tracker_filter.py` (`projects/bird-watcher/src/birdwatcher/pipelines/elements/filters/
@@ -118,7 +129,7 @@ def check_frame_alignment(
     video_path: Path,
     detections_path: Path,
 ) -> None:
-    """Refuse to run if the CSV's frame numbering does not cover this exact video.
+    """Refuse to run if the CSV has a frame_number this video does not have.
 
     This tracker has no frame-gap or elapsed-time input at all -- every call to
     `match_and_track` advances every track's Kalman prediction by exactly one step (see
@@ -130,22 +141,60 @@ def check_frame_alignment(
     predict-only steps where they should have gotten a real correction, and vice versa. There is
     no field in either file this code could use to detect or correct that offset, so it refuses
     rather than guessing one.
+
+    Only a frame_number outside 0..frame_count - 1 is refused. A CSV that starts after frame 0
+    or ends before the last frame is valid: frames without rows are frames without detections
+    (hand-labelled detections, for example, exist only where a bird is visible). The frame
+    count always comes from the video, never from the CSV.
     """
     if not detections_by_frame:
         return
     lowest_frame, highest_frame = min(detections_by_frame), max(detections_by_frame)
-    if lowest_frame == 0 and highest_frame == frame_count - 1:
+    if lowest_frame >= 0 and highest_frame <= frame_count - 1:
         return
     raise SystemExit(
-        f"{detections_path} covers frame_number {lowest_frame}..{highest_frame}, but "
-        f"{video_path} has {frame_count} frames (0..{frame_count - 1}). These do not match, "
-        "which is exactly what happens when one of the two was cut with "
+        f"{detections_path} has frame_number {lowest_frame}..{highest_frame}, but "
+        f"{video_path} has {frame_count} frames (0..{frame_count - 1}), so some detections "
+        "fall outside the video. This is exactly what happens when one of the two was cut with "
         "--start-frame-number/--stop-frame-number and the other was not: a cut CSV's "
         "frame_number is renumbered from 0 relative to the cut, not the original recording. "
         "Feed run_tracker.py the *same cut* of the video that produced this CSV, or don't "
         "cut either one. Refusing rather than guessing an offset, since a wrong guess would "
         "silently attach detections to the wrong frames."
     )
+
+
+def _box_row(frame_number: int, track_id: int, x: float, y: float, w: float, h: float) -> dict:
+    return {"frame_number": frame_number, "track_id": track_id, "x": float(x), "y": float(y), "w": float(w), "h": float(h)}
+
+
+def build_labelled_rows(
+    deleted_tracked_objects: list,
+    confirmed_at_frame: dict[int, int],
+    predicted_rows: list[dict],
+) -> list[dict]:
+    """Every row the new output format records, sorted by (frame_number, track_id).
+
+    `matched` and `pre_confirmation` rows come from each track's own `detections` list, which
+    holds exactly the detections the track was matched to (one per matched frame), so they are
+    built after `finalize_tracking()`, when every track sits in `deleted_tracked_objects`. A
+    matched detection is `pre_confirmation` if it is from a frame before the track was first
+    seen CONFIRMED, `matched` otherwise. `predicted_rows` are collected during the loop.
+    """
+    rows = []
+    for tracked_object in deleted_tracked_objects:
+        confirmed_frame = confirmed_at_frame.get(tracked_object.id)
+        track_confirmed = confirmed_frame is not None
+        for detection in tracked_object.detections:
+            box = detection.bounding_box
+            is_matched = track_confirmed and detection.frame_number >= confirmed_frame
+            row = _box_row(detection.frame_number, tracked_object.id, box.x1, box.y1, box.width, box.height)
+            row["row_type"] = "matched" if is_matched else "pre_confirmation"
+            row["track_confirmed"] = track_confirmed
+            rows.append(row)
+    rows.extend(predicted_rows)
+    rows.sort(key=lambda row: (row["frame_number"], row["track_id"]))
+    return rows
 
 
 def run(
@@ -160,6 +209,7 @@ def run(
     association_method: str,
     association_params: AssociationParams | None = None,
     write_video: bool = True,
+    legacy_output: bool = False,
 ) -> int:
     detections_by_frame = load_detections_by_frame(detections_path)
     tracker = SimpleSORTTracker(
@@ -192,10 +242,16 @@ def run(
 
     trails: dict[int, list[tuple[int, int]]] = defaultdict(list)
     track_rows: list[dict] = []
+    # New output format only: the frame each track was first seen CONFIRMED, and the
+    # `predicted` rows of confirmed tracks that were alive but unmatched.
+    confirmed_at_frame: dict[int, int] = {}
+    predicted_rows: list[dict] = []
     frames_processed = 0
 
     with out_tracks_path.open("w", newline="") as tracks_handle:
         fieldnames = ["frame_number", "track_id", "x", "y", "w", "h"]
+        if not legacy_output:
+            fieldnames += ["row_type", "track_confirmed"]
         tracks_writer = csv.DictWriter(tracks_handle, fieldnames=fieldnames)
         tracks_writer.writeheader()
 
@@ -204,6 +260,14 @@ def run(
             ok, frame = capture.read()
             if not ok:
                 break
+
+            # After match_and_track returns, every track's Kalman state is already predicted
+            # for the *next* frame, so this frame's prediction must be read before the call.
+            predicted_boxes = {
+                tracked_object.id: tracked_object.kalman_tracker_state.to_tlwh()
+                for tracked_object in tracker.tracked_objects
+                if tracked_object.state == TrackedObjectState.CONFIRMED
+            }
 
             frame_timestamp = round(frame_number * 1000 / fps)
             boxes = detections_by_frame.get(frame_number, [])
@@ -214,6 +278,15 @@ def run(
             for tracked_object in tracker.tracked_objects:
                 if tracked_object.state != TrackedObjectState.CONFIRMED:
                     continue
+                confirmed_at_frame.setdefault(tracked_object.id, frame_number)
+                if tracked_object.detections[-1].frame_number != frame_number:
+                    # Confirmed, alive, unmatched this frame: a track only gets here if it was
+                    # already confirmed before this frame, so its prediction was recorded above.
+                    x, y, w, h = predicted_boxes[tracked_object.id]
+                    row = _box_row(frame_number, tracked_object.id, x, y, w, h)
+                    row["row_type"] = "predicted"
+                    row["track_confirmed"] = True
+                    predicted_rows.append(row)
                 # Same convention as the fleet's own DisplayTracksSink: the last matched
                 # detection's box is the "current" box, not the Kalman filter's own state.
                 box = tracked_object.detections[-1].bounding_box
@@ -237,16 +310,17 @@ def run(
                         color,
                         box_thickness,
                     )
-                track_rows.append(
-                    {
-                        "frame_number": frame_number,
-                        "track_id": tracked_object.id,
-                        "x": box.x1,
-                        "y": box.y1,
-                        "w": box.width,
-                        "h": box.height,
-                    }
-                )
+                if legacy_output:
+                    track_rows.append(
+                        {
+                            "frame_number": frame_number,
+                            "track_id": tracked_object.id,
+                            "x": box.x1,
+                            "y": box.y1,
+                            "w": box.width,
+                            "h": box.height,
+                        }
+                    )
 
             if write_video:
                 frame_counter_baseline_y = round(20 * font_scale / MINIMUM_FONT_SCALE)
@@ -265,13 +339,44 @@ def run(
             if frame_count and frame_number >= frame_count:
                 break
 
+        tracker.finalize_tracking()
+        if not legacy_output:
+            # Every track, confirmed or not, is in deleted_tracked_objects after finalize_tracking.
+            track_rows = build_labelled_rows(tracker.deleted_tracked_objects, confirmed_at_frame, predicted_rows)
         tracks_writer.writerows(track_rows)
 
-    tracker.finalize_tracking()
     capture.release()
     if writer is not None:
         writer.release()
     return frames_processed
+
+
+def resolve_parameters(config: dict, overrides: dict | None = None) -> dict:
+    """The tracker parameters a run actually uses: a CLI override if given, else the config
+    file's value, else the runner's default. `overrides` maps parameter names to CLI values
+    (None = not given). Returns every parameter, with `association_params` as the
+    AssociationParams instance passed to the tracker."""
+    overrides = overrides or {}
+
+    def pick(name, default):
+        if overrides.get(name) is not None:
+            return overrides[name]
+        return config.get(name, default)
+
+    defaults = AssociationParams()
+    return {
+        "euclidean_matching_threshold": pick("euclidean_matching_threshold", REFERENCE_EUCLIDEAN_MATCHING_THRESHOLD),
+        "max_age": pick("max_age", DEFAULT_MAX_AGE),
+        "tentative_threshold": pick("tentative_threshold", DEFAULT_TENTATIVE_THRESHOLD),
+        "kalman_gating": pick("kalman_gating", "position"),
+        "association_method": pick("association_method", "original"),
+        "association_params": AssociationParams(
+            appearance_weight=pick("appearance_weight", defaults.appearance_weight),
+            cue_weights=tuple(pick("cue_weights", defaults.cue_weights)),
+            appearance_ema=pick("appearance_ema", defaults.appearance_ema),
+            appearance_gate=pick("appearance_gate", defaults.appearance_gate),
+        ),
+    }
 
 
 def main() -> None:
@@ -281,6 +386,12 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=None, help="path to write the annotated video (omit with --no-video)")
     parser.add_argument("--no-video", action="store_true", help="skip writing the annotated video (much faster on 4K)")
     parser.add_argument("--tracks", type=Path, required=True, help="path to write the track CSV")
+    parser.add_argument(
+        "--legacy-output",
+        action="store_true",
+        help="write the old track CSV (frame_number, track_id, x, y, w, h: confirmed tracks only, "
+        "with the last matched box repeated while a track coasts) instead of the labelled format",
+    )
     parser.add_argument(
         "--euclidean-matching-threshold",
         type=float,
@@ -336,65 +447,28 @@ def main() -> None:
     args = parser.parse_args()
 
     config = {}
-    
+
     if args.config is not None:
         config = load_config(args.config)
 
-    euclidean_matching_threshold = (
-        args.euclidean_matching_threshold
-        if args.euclidean_matching_threshold is not None
-        else config.get(
-            "euclidean_matching_threshold",
-            REFERENCE_EUCLIDEAN_MATCHING_THRESHOLD,
-        )
-    )
-
-    max_age = (
-        args.max_age
-        if args.max_age is not None
-        else config.get("max_age", DEFAULT_MAX_AGE)
-    )
-
-    tentative_threshold = (
-        args.tentative_threshold
-        if args.tentative_threshold is not None
-        else config.get(
-            "tentative_threshold",
-            DEFAULT_TENTATIVE_THRESHOLD,
-        )
-    )
-
-    kalman_gating = (
-        args.kalman_gating
-        if args.kalman_gating is not None
-        else config.get("kalman_gating", "position")
-    )
-
-    association_method = (
-        args.association_method
-        if args.association_method is not None
-        else config.get("association_method", "original")
-    )
-
-    defaults = AssociationParams()
-    association_params = AssociationParams(
-        appearance_weight=(
-            args.appearance_weight
-            if args.appearance_weight is not None
-            else config.get("appearance_weight", defaults.appearance_weight)
-        ),
-        cue_weights=tuple(
-            args.cue_weights if args.cue_weights is not None else config.get("cue_weights", defaults.cue_weights)
-        ),
-        appearance_ema=(
-            args.appearance_ema if args.appearance_ema is not None else config.get("appearance_ema", defaults.appearance_ema)
-        ),
-        appearance_gate=(
-            args.appearance_gate
-            if args.appearance_gate is not None
-            else config.get("appearance_gate", defaults.appearance_gate)
-        ),
-    )
+    overrides = {
+        "euclidean_matching_threshold": args.euclidean_matching_threshold,
+        "max_age": args.max_age,
+        "tentative_threshold": args.tentative_threshold,
+        "kalman_gating": args.kalman_gating,
+        "association_method": args.association_method,
+        "appearance_weight": args.appearance_weight,
+        "cue_weights": args.cue_weights,
+        "appearance_ema": args.appearance_ema,
+        "appearance_gate": args.appearance_gate,
+    }
+    parameters = resolve_parameters(config, overrides)
+    euclidean_matching_threshold = parameters["euclidean_matching_threshold"]
+    max_age = parameters["max_age"]
+    tentative_threshold = parameters["tentative_threshold"]
+    kalman_gating = parameters["kalman_gating"]
+    association_method = parameters["association_method"]
+    association_params = parameters["association_params"]
 
     if args.out is None and not args.no_video:
         parser.error("--out is required unless --no-video is given")
@@ -411,6 +485,7 @@ def main() -> None:
         association_method,
         association_params,
         write_video=not args.no_video,
+        legacy_output=args.legacy_output,
     )
 
     experiment_name = config.get("experiment_name", "custom")

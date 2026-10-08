@@ -1,0 +1,13 @@
+{
+  "experiment_name": "kalman_normal",
+  "provenance": "reconstructed, verified by exact match",
+  "verified_against": [
+    "experiments/results/kalman_normal/1DAC_tracks.csv (1DAC, 7571 rows)"
+  ],
+  "verified_input": "yolo (spoor_tracker/tracker-kit/data/<video>_detections.csv)",
+  "association_method": "original",
+  "euclidean_matching_threshold": 250,
+  "kalman_gating": "position",
+  "max_age": 30,
+  "tentative_threshold": 3
+}
