@@ -1,0 +1,42 @@
+# Tracker evaluation configuration. Copy to local.yaml (git-ignored) and set the paths.
+# Every path can also be overridden on the command line (see scripts/evaluate.py --help).
+
+paths:
+  # Directory with the videos, <video>.mp4. The frame count, fps and size come from these files.
+  videos_dir: /path/to/videos
+  # Directory with the GT tracks, <video><gt_suffix>. A video is evaluated only if its GT exists.
+  gt_dir: /path/to/gt
+  gt_suffix: _reference_tracks_corrected.csv
+  # Results roots to evaluate, any number. Each entry: path, layout and, for layout `legacy`,
+  # the input the legacy runs used.
+  #   layout v2:      <path>/<input>/<experiment>/<CLIP>_tracks.csv (labelled runner output)
+  #   layout legacy:  <path>/<experiment>/<CLIP>[_suffix]_tracks.csv (old runner output)
+  results:
+    - {path: /path/to/experiments/results_v2, layout: v2}
+    - {path: /path/to/experiments/results, layout: legacy, input: yolo}
+  # Alias mapping written by research/runner/rerun_experiments.py (optional).
+  aliases: /path/to/experiments/results_v2/aliases.yaml
+  # External references, evaluated as they are (input = their name, variant = as-is).
+  # Files: <dir>/<video><suffix>, corner format (frame_number, obj_id, x1, y1, x2, y2).
+  external:
+    - {name: cloud, dir: /path/to/cloud_csvs, suffix: _cloud_reference_tracks.csv}
+  # Cache for video metadata (frame count etc.), keyed on path, size and modification time.
+  cache_dir: evaluation/new/cache
+
+similarity:
+  measures: [dotd, iou]          # both always computed
+  primary: dotd
+  dotd:
+    s_schemes: [per_track, fixed, per_box]
+    primary_s_scheme: per_track
+    s_fixed: 9.0                 # px, for the `fixed` scheme
+    s_min: 4.0                   # px, floor for `per_track` and `per_box`
+
+variants:
+  # Fixed before any results were seen; do not change it based on which variant scores best.
+  default: matched_final
+  derived: [matched_online, matched_final, matched_final_all, predicted, frozen]
+
+trackeval:
+  use_parallel: false
+  num_cores: 4
