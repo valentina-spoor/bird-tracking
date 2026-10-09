@@ -1,5 +1,9 @@
 # Tracker evaluation (`evaluation/new/`)
 
+- **What the rows, columns and metrics mean** (no results): [METRICS.md](METRICS.md)
+- **Results of a run, with a short analysis**: [reports/](reports/), e.g. [2026-10-09](reports/2026-10-09_results.md)
+- **Print a results CSV as readable tables** (display only): `scripts/show_metrics.py`, see below
+
 Scores multi-object bird trackers against hand-labelled ground truth (GT) with
 [TrackEval](https://github.com/JonathonLuiten/TrackEval) as the engine: HOTA, Identity (IDF1),
 CLEAR (MOTA) and counts, for every tracker output variant, with a centre-distance similarity
@@ -33,6 +37,13 @@ do the same for py-motmetrics (`np.asfarray`).
 `--parallel N` turns on TrackEval's parallel mode; TrackEval parallelises over the videos of one
 tracker and starts a process pool per tracker, so it only pays off with many videos.
 `evaluation/new/results/` and the metadata cache `evaluation/new/cache/` are git-ignored.
+
+To look at a results table without opening the CSV (one table per input; default variant and
+primary similarity unless told otherwise, see `--help`):
+
+```bash
+.venv/bin/python evaluation/new/scripts/show_metrics.py evaluation/new/results/run1/metrics_pooled.csv
+```
 
 Tests (the ones on the real clips are skipped if the data or the re-runs are not available):
 
@@ -211,6 +222,9 @@ birdeval/
   _numpy_compat.py      numpy aliases for TrackEval
 scripts/evaluate.py     CLI
 scripts/verify_frozen.py  check a labelled CSV reproduces a legacy CSV exactly
+scripts/show_metrics.py   print a results CSV as readable tables (display only)
+METRICS.md              what every row, column and metric means
+reports/                fixed write-ups of evaluation runs
 configs/default.yaml    documented config with placeholder paths
 tests/                  toy cases, readers, variants, similarity, motmetrics cross-check
 ```
