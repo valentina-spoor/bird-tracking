@@ -58,6 +58,7 @@ may change is `spoor_tracker/tracker-kit/run_tracker.py`.
 | Library | TrackEval (JonathonLuiten/TrackEval) as the engine, with a custom dataset class. py-motmetrics only as an independent cross-check in the tests. |
 | Spoor's own `evaluate_track_quality` | Not involved. Do not import or reproduce it. |
 | Frame indexing | 0-based everywhere internally. The frame count comes from the video file, never from a CSV. |
+| Diagnostics | Our own, not standard metrics, prefixed `diag_` and labelled as such in tables and README. `diag_id_changes`: identity changes per predicted track, from a plain per-frame Hungarian matching on the similarity at threshold 0.5 with no preference for last frame's pairs (unlike CLEAR IDSW); can over-count with noisy detections, and DotD ties when two boxes share a centre. Per run and video, from the labelled runner output: `diag_predicted_nonpositive_size` and `diag_predicted_centre_outside_frame` (`predicted` rows). CLEAR Frag's inflation by GT annotation gaps is documented and quantified in the README only. |
 
 ---
 

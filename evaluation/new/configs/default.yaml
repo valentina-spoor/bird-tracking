@@ -11,9 +11,15 @@ paths:
   # the input the legacy runs used.
   #   layout v2:      <path>/<input>/<experiment>/<CLIP>_tracks.csv (labelled runner output)
   #   layout legacy:  <path>/<experiment>/<CLIP>[_suffix]_tracks.csv (old runner output)
+  # v2 roots read only the listed <input> folders. Legacy roots take one `input` for all their
+  # folders, with optional per-folder overrides of `input` and `experiment`.
   results:
-    - {path: /path/to/experiments/results_v2, layout: v2}
-    - {path: /path/to/experiments/results, layout: legacy, input: yolo}
+    - {path: /path/to/experiments/results_v2, layout: v2, inputs: [gt, yolo]}
+    - path: /path/to/experiments/results
+      layout: legacy
+      input: yolo
+      folders:
+        test_original_GT1: {input: gt, experiment: baseline}
   # Alias mapping written by research/runner/rerun_experiments.py (optional).
   aliases: /path/to/experiments/results_v2/aliases.yaml
   # External references, evaluated as they are (input = their name, variant = as-is).

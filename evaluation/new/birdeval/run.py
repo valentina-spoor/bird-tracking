@@ -13,6 +13,7 @@ import numpy as np
 from . import _numpy_compat  # noqa: F401
 import trackeval  # noqa: E402
 
+from .diagnostics import IdentityChanges  # noqa: E402
 from .trackeval_dataset import CLASS_NAME, BirdDataset, SequenceSpec, SimilarityConfig, TrackerSource  # noqa: E402
 
 POOLED = "COMBINED_SEQ"
@@ -21,7 +22,9 @@ HOTA_FIELDS = ["HOTA", "DetA", "AssA", "LocA", "DetRe", "DetPr", "AssRe", "AssPr
 IDENTITY_FIELDS = ["IDF1", "IDP", "IDR", "IDTP", "IDFP", "IDFN"]
 CLEAR_FIELDS = ["MOTA", "MOTP", "IDSW", "Frag", "MT", "PT", "ML", "CLR_TP", "CLR_FP", "CLR_FN", "MODA", "CLR_Re", "CLR_Pr"]
 COUNT_FIELDS = {"Dets": "n_pred_boxes", "GT_Dets": "n_gt_boxes", "IDs": "n_pred_ids", "GT_IDs": "n_gt_ids"}
-METRIC_COLUMNS = [*HOTA_FIELDS, *IDENTITY_FIELDS, *CLEAR_FIELDS, *COUNT_FIELDS.values(), "id_ratio", "n_frames", "trackeval_frames"]
+# Our own diagnostics (not standard metrics), prefixed `diag_`. See diagnostics.py.
+DIAGNOSTIC_FIELDS = [IdentityChanges.FIELD]
+METRIC_COLUMNS = [*HOTA_FIELDS, *IDENTITY_FIELDS, *CLEAR_FIELDS, *COUNT_FIELDS.values(), "id_ratio", "n_frames", "trackeval_frames", *DIAGNOSTIC_FIELDS]
 
 EVALUATOR_CONFIG = {
     "USE_PARALLEL": False,
@@ -50,6 +53,9 @@ def flatten(metric_results: dict) -> dict:
     row["id_ratio"] = row["n_pred_ids"] / row["n_gt_ids"] if row["n_gt_ids"] else float("nan")
     # Timesteps CLEAR iterated over (0 if the tracker has no boxes at all, see CLEAR.eval_sequence).
     row["trackeval_frames"] = int(clear["CLR_Frames"])
+    for name, values in metric_results.items():
+        if name not in ("HOTA", "CLEAR", "Identity", "Count"):
+            row.update({field: int(value) for field, value in values.items()})
     return row
 
 
@@ -59,12 +65,20 @@ def evaluate(
     similarities: list[SimilarityConfig],
     use_parallel: bool = False,
     num_cores: int = 1,
+    extra_metrics: list | None = None,
 ) -> list[dict]:
-    """One row per (tracker, similarity, sequence or COMBINED_SEQ)."""
+    """One row per (tracker, similarity, sequence or COMBINED_SEQ). `extra_metrics` are further
+    TrackEval metric instances whose integer fields are added to each row."""
     config = {**EVALUATOR_CONFIG, "USE_PARALLEL": use_parallel, "NUM_PARALLEL_CORES": num_cores}
     evaluator = trackeval.Evaluator(config)
     # Evaluator.evaluate always appends Count itself.
-    metrics = [trackeval.metrics.HOTA(), trackeval.metrics.CLEAR({"PRINT_CONFIG": False}), trackeval.metrics.Identity({"PRINT_CONFIG": False})]
+    metrics = [
+        trackeval.metrics.HOTA(),
+        trackeval.metrics.CLEAR({"PRINT_CONFIG": False}),
+        trackeval.metrics.Identity({"PRINT_CONFIG": False}),
+        IdentityChanges(),
+        *(extra_metrics or []),
+    ]
     rows = []
     for similarity in similarities:
         dataset = BirdDataset(sequences, trackers, similarity)
